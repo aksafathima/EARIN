@@ -1,0 +1,216 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+
+# Set a fixed seed for reproducibility
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
+torch.backends.cudnn.deterministic = True
+
+# Define the MLP architecture
+class CustomMLP(nn.Module):
+    def __init__(self, input_size, hidden_layers, output_size):
+        super(CustomMLP, self).__init__()
+        layers = []
+        last_size = input_size
+        for layer_size in hidden_layers:
+            layers.append(nn.Linear(last_size, layer_size))
+            layers.append(nn.ReLU())  # Add ReLU activation after each linear layer
+            last_size = layer_size
+        layers.append(nn.Linear(last_size, output_size))
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+# Data preprocessing and dataset preparation
+def get_data_loaders(batch_size):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),  # Normalize the images
+        transforms.Lambda(lambda x: torch.flatten(x))  # Flatten the images
+    ])
+
+    # Set a fixed seed for reproducibility during data loading
+    generator = torch.Generator().manual_seed(42)
+
+    # Load the KMNIST dataset
+    train_dataset = datasets.KMNIST(root='./data', train=True, download=True, transform=transform)
+    test_dataset = datasets.KMNIST(root='./data', train=False, download=True, transform=transform)
+
+    # Create data loaders to handle the dataset batching and shuffling
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_dataset, batch_size=batch_size, shuffle=True, generator=generator
+    )
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_dataset, batch_size=batch_size, shuffle=False, generator=generator
+    )
+
+    return train_loader, test_loader
+
+
+# Define the training function
+def train(model, device, train_loader, optimizer, criterion):
+    model.train()
+    step_losses = []
+    correct = 0
+    total_samples = len(train_loader.dataset)
+
+    for data_target in train_loader:
+        data, target = data_target  # Ensure proper unpacking
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()  # Reset gradients
+        output = model(data)  # Forward pass
+        loss = criterion(output, target)
+        loss.backward()  # Backpropagation
+        optimizer.step()  # Update weights
+        
+        step_losses.append(loss.item())
+        
+        pred = output.argmax(dim=1, keepdim=True)  # Predicted labels
+        correct += pred.eq(target.view_as(pred)).sum().item()  # Correct predictions
+
+    accuracy = correct / total_samples  # Training accuracy
+    return step_losses, accuracy
+
+
+# Define the validation function
+def validate(model, device, test_loader, criterion):
+    model.eval()
+    step_losses = []
+    correct = 0
+    total_samples = len(test_loader.dataset)
+
+    with torch.no_grad():
+        for data_target in test_loader:
+            data, target = data_target  # Ensure proper unpacking
+            data, target = data.to(device), target.to(device)  # Corrected syntax
+            output = model(data)
+            loss = criterion(output, target)  # Loss calculation
+            step_losses.append(loss.item())
+            pred = output.argmax(dim=1, keepdim=True)  # Predicted labels
+            correct += pred.eq(target.view_as(pred)).sum().item()  # Correct predictions
+
+    accuracy = correct / total_samples
+    return step_losses, accuracy
+
+
+# Experiment runner with fixed seed
+def run_experiment(batch_sizes, learning_rates, hidden_configs, optimizers):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    criterion = nn.CrossEntropyLoss()
+    all_results = []
+
+    for batch_size in batch_sizes:
+        train_loader, test_loader = get_data_loaders(batch_size)
+        for config in hidden_configs:
+            hidden_layers = config['layers']
+            for lr in learning_rates:
+                for optimizer_type in optimizers:
+                    network = CustomMLP(784, hidden_layers, 10).to(device)  # Correct input size
+                    optimizer = optimizer_type(network.parameters(), lr=lr)
+
+                    train_losses, train_accuracy = train(network, device, train_loader, optimizer, criterion)
+                    val_losses, val_accuracy = validate(network, device, test_loader, criterion)
+
+                    result = {
+                        "Batch Size": batch_size,
+                        "Learning Rate": lr,
+                        "Optimizer": optimizer.__class__.__name__,
+                        "Hidden Layers": hidden_layers,
+                        "Train Losses": train_losses,
+                        "Train Accuracy": train_accuracy,
+                        "Validation Losses": val_losses,
+                        "Validation Accuracy": val_accuracy,
+                    }
+
+                    all_results.append(result)
+
+    return all_results
+
+
+# Function to plot loss and accuracy metrics for visualization
+def plot_metrics(results):
+    plt.figure(figsize=(12, 6))
+    plt.suptitle("Training and Validation Metrics")  # Main title for the plot
+
+    # Plot loss over time
+    plt.subplot(1, 2, 1)
+    for result in results:
+        plt.plot(
+            result["Train Losses"], 
+            label=f"Train Loss (LR={result['Learning Rate']}, BS={result['Batch Size']}, OPT={result['Optimizer']})"
+        )
+        plt.plot(
+            result["Validation Losses"], 
+            label=f"Validation Loss (LR={result['Learning Rate']}, BS={result['Batch Size']}, OPT={result['Optimizer']})"
+        )
+    
+    plt.xlabel("Training Steps")  # Label for the x-axis
+    plt.ylabel("Loss")  # Label for the y-axis
+    plt.title("Training and Validation Loss")
+    plt.legend()
+
+    # Plot accuracy over time
+    plt.subplot(1, 2, 2)
+    for result in results:
+        plt.plot(
+            [result["Train Accuracy"]] * len(result["Train Losses"]), 
+            linestyle='-', 
+            label=f"Train Accuracy (LR={result['Learning Rate']}, BS={result['Batch Size']}, OPT={result['Optimizer']})"
+        )
+        plt.plot(
+            [result["Validation Accuracy"]] * len(result["Validation Losses"]), 
+            linestyle='-', 
+            label=f"Validation Accuracy (LR={result['Learning Rate']}, BS={result['Batch Size']}, OPT={result['Optimizer']})"
+        )
+
+    plt.xlabel("Training Steps")  # Label for the x-axis
+    plt.ylabel("Accuracy")  # Label for the y-axis
+    plt.title("Training and Validation Accuracy")
+    plt.legend()
+    plt.show()
+
+
+# Summarize the results for analysis
+def summarize_results(results):
+    print("Experiment Results Summary:")
+    print("-" * 40)
+
+    for result in results:
+        print(f"Batch Size: {result['Batch Size']}, Learning Rate: {result['Learning Rate']}, Optimizer: {result['Optimizer']}")
+        print(f"Hidden Layers: {result['Hidden Layers']}")
+        print(f"Training Loss (first step): {result['Train Losses'][0]:.4f}")
+        print(f"Validation Loss (first step): {result['Validation Losses'][0]:.4f}")
+        print(f"Training Accuracy: {result['Train Accuracy']:.2%}")
+        print(f"Validation Accuracy: {result['Validation Accuracy']:.2%}")
+        print("-" * 40)
+
+# Setting parameters for the experiment
+batch_sizes = [1, 32, 64]
+learning_rates = [0.001, 0.01, 0.1]
+optimizers = [optim.SGD, optim.Adam]
+
+# Hidden layers configurations (including linear model)
+hidden_configs = [
+    {'layers': []},
+    {'layers': [128]},
+    {'layers': [128, 64]},
+    {'layers': [128, 128, 64]}
+]
+
+# Run the experiment with updated configurations
+results = run_experiment(batch_sizes, learning_rates, hidden_configs, optimizers)
+
+# Plot the results to visualize metrics
+plot_metrics(results)
+
+# Summarize the results for analysis
+summarize_results(results)
