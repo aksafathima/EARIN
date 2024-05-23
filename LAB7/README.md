@@ -1,4 +1,4 @@
-# Date Management Prolog Script 
+# Mini Prolog Project on Date Management  
 Overview: 
 
 This Prolog script provides robust functionalities for managing dates, particularly calculating working days while accounting for weekends and handling month-end and year-end transitions. It is tailored for the year 2024, a leap year, making it suitable for applications that require precise date calculations like project planning and deadline tracking.
