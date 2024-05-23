@@ -89,10 +89,3 @@ weekday_after(WeekDay, Days, ResultWeekDay) :-
     next_weekday(WeekDay, NextWeekDay),
     Days1 is Days - 1,
     weekday_after(NextWeekDay, Days1, ResultWeekDay).
-
-% Example query to find the date and day after 10 working days starting from January 1, 2024
-query :-
-    StartDate = date(2024, 1, 1),
-    N = 10,
-    add_working_days(StartDate, N, ResultDate, ResultWeekDay),
-    format("New Date: ~w, New WeekDay: ~w~n", [ResultDate, ResultWeekDay]).
